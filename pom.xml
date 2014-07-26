@@ -16,6 +16,6 @@
     </dependency>
   </dependencies>
   <build>
-    <finalName>WebApp-${pomapp}-build-${build.number}</finalName>
+    <finalName>WebApp-${build.number}</finalName>
   </build>
 </project>
