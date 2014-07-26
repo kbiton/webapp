@@ -16,6 +16,6 @@
     </dependency>
   </dependencies>
   <build>
-    <finalName>WebApp-${env.appver}-build-${build.number}</finalName>
+    <finalName>WebApp-${appver}-build-${build.number}</finalName>
   </build>
 </project>
