@@ -5,7 +5,7 @@ usage()
 cat << EOF
 usage: $0 options
 	
-This script takes CFN paramters and at the end of the day suppose to produce an AMI with your install software
+This script takes CFN parameters, Deploy a CFN Stack and if successful, produces an AMI
 
 Requirements:
 
@@ -15,84 +15,95 @@ Requirements:
 
 Use Cases
 
-- Use as a post build step for Jenkins , create the stack , deploy software , delete stack
+- Build a continues integration pipeline , starting from Jenkins: Build Artifcats,call this script with params,Produce AMI
 - Use it as an AMI producer , plug it into any process you already use
 	
 OPTIONS:
 	-h	Show this message
-	-s	Name of CloudFormation stack
+	-n	Name of CloudFormation stack
 	-a	Name to use for generated AMI
-	-d	Description to use for generated AMI
+	-v	The VPC ID
+	-s  The Subnet ID
 	-k  EC2 Keypair Name
 	-i  EC2 instance type to use
 EOF
 }
 
 # Parse options
-while getopts "h:s:a:d:k:e:i:" OPTION
+while getopts "h:n:s:a:v:k:e:i:" OPTION
 do
 	case $OPTION in
 		h)
 			usage
 			exit 1
 			;;
-		s)
+		n)
 			STACK_NAME=$OPTARG
 			;;
 		a)
 			AMI_NAME=$OPTARG
 			;;
-		d)
-			AMI_DESC=$OPTARG
+		v)
+			VPC_ID=$OPTARG
+			;;
+		s)
+			SUBNET_ID=$OPTARG
 			;;
 		k)      
 			KEY_PAIR=$OPTARG
 			;;
 		i)
-			INSTANCE_TYPE=$OPTARG	
+			INSTANCE_SIZE=$OPTARG	
 			;;	
 		?)
 			usage
 			exit
 			;;
 	esac
-done
+done 
 
-echo $KEY_PAIR  >> bundle_ami.log
-echo $RECIPE_LOC  >> bundle_ami.log
-echo $INSTANCE_TYPE  >> bundle_ami.log
-
-# Validate required parameters
-if [[ -z "${STACK_NAME}" ]] ||  [[ -z "${AMI_NAME}" ]] ||  [[ -z "${AMI_DESC}" ]] ; then
+# Validation
+if [[ -z "${STACK_NAME}" ]] || [[ -z "${AMI_NAME}" ]] || [[ -z "${VPC_ID}" ]] || [[ -z "${SUBNET_ID}" ]] || [[ -z "${KEY_PAIR}" ]] || \
+   [[ -z "${INSTANCE_SIZE}" ]] 
+  then
 	usage
 	exit 1
 fi
 
-# Make sure the necessary AWS credentials are present for boto. 
-if [[ -z "${AWS_ACCESS_KEY_ID}" ]] || [[ -z "${AWS_SECRET_ACCESS_KEY}" ]] ; then
-	echo "Error: Both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set in your environment to use this tool."
-	exit -1
-fi
+function log_exit_error {
+	
+	logger -s -p local3.error -t CFNDEPLOY:ERROR $1
+	
+}
 
-# If an AMI description isn't provided, set it to the AMI Name
-if [[ -z "${AMI_DESC}" ]] ; then
-	AMI_DESC=$AMI_NAME
-fi
+function log_and_cont {
+	
+	logger -s -p local3.info -t CFNDEPLOY:INFO $1
+	
+}
 
-# Make sure STACK_TYPE is correct
-if [[ $STACK_TYPE != "amm-web" ]] && [[ $STACK_TYPE != "amm-transcoder" ]] && [[ $STACK_TYPE != "amm-load" ]] ; then
-	echo "Invalid stack name."
-	usage
-	exit 1
-fi
+function exists {
+	
+command -v $1
+	if [ "$?" != "0" ];then
+	  log_exit_error "command $1 could not be found... bailing out" 
+    fi
 
-# Let the user know we're launching the stack
-echo "Launching stack" $STACK_NAME  >> bundle_ami.log
+}
+
+# Lets randomize the stack name to avoid duplication
+STACK_NAME = $STACK_NAME-$(date +%s)
+
+# launching the stack
+log_and_cont "Launching CFN stack $STACK_NAME"
 
 # Launch selected stack and capture its name
-createstack=$(cfn-create-stack $STACK_NAME --disable-rollback --template-url ${RECIPE_LOC}/amm/cfn/amm-ami.template --capabilities CAPABILITY_IAM --parameters="S3Bucket=${RECIPE_LOC};KeyName=${KEY_PAIR};InstanceType=${INSTANCE_TYPE};ChefSoloTemplateURL=${RECIPE_LOC}/amm/cfn/amm-ami-chef.template;ChefRecipesURL=${RECIPE_LOC}/amm/amm-chef-solo.tar.gz;ChefRecipe=${STACK_TYPE}")
-echo "Stack $STACK_NAME launched. Status will be polled until creation is complete..."  >> bundle_ami.log
-# wait before moving on to the next, cnf-list-stacks, call
+aws cloudformation create-stack --stack-name $STACK_NAME --template-url \
+"https://s3-eu-west-1.amazonaws.com/kbitpub/cfn-jenkins-demo/webapp-cfn.json" \
+--disable-rollback --timeout-in-minutes 30 --capabilities CAPABILITY_IAM \
+--parameters ParameterKey=keypair,ParameterValue=$KEY_PAIR 
+
+# 
 sleep 1
 
 # Continue checking status until it is no longer CREATE_IN_PROGRESS
